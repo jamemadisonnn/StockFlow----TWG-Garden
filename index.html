@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>StockFlow v1.0</title>
+<title>StockFlow v1.9</title>
 <style>
 :root{
  --bg:#f4f4f6; --card:#fff; --text:#080808; --secondary:#9aa3b4;
@@ -216,6 +216,85 @@ document.addEventListener("click",e=>{if(!e.target.closest(".suggest-wrap"))$("s
 function newSession(){let now=Date.now(),s={id:"ST-"+now,counter:$("counter").value,category:$("category").value,startedAt:now,updated:now,items:[]},a=load();a.unshift(s);persist(a);openSession(s.id)}
 function openSession(id){activeId=id;editing=null;$("home").classList.add("hidden");$("count").classList.remove("hidden");renderSession();window.scrollTo(0,0)}
 function goHome(){activeId=null;$("count").classList.add("hidden");$("home").classList.remove("hidden");renderHome();window.scrollTo(0,0)}
+
+let toastTimer=null;
+function showToast(message){
+ let t=$("toast"),txt=$("toastText");
+ if(!t||!txt)return;
+ txt.textContent=message;
+ let undo=$("undoBtn");if(undo)undo.style.display=lastDeletedItem?"inline":"none";
+ t.classList.add("show");clearTimeout(toastTimer);
+ toastTimer=setTimeout(()=>t.classList.remove("show"),4000);
+}
+function editItem(i){
+ let session=current(); if(!session||!session.items[i])return;
+ let item=session.items[i]; editing=i;
+ $("product").value=item.product; $("qty").value=item.qty;
+ if(item.bbd&&item.bbd!=="No-Best Before Date"){ $("bbd").value=item.bbd; bbdDigits=item.bbd.replace(/\D/g,"").slice(0,8); }
+ else { bbdDigits=""; $("bbd").value="00/00/0000"; }
+ let btn=$("addButton"); if(btn)btn.textContent="Save Changes";
+ let cancel=$("cancelEdit"); if(cancel)cancel.classList.remove("hidden");
+ showBbdError(false); $("product").focus();
+}
+function cancelEdit(){
+ editing=null; $("product").value=""; $("qty").value=""; $("bbd").value=""; bbdDigits="";
+ let btn=$("addButton"); if(btn)btn.textContent="Add Item";
+ let cancel=$("cancelEdit"); if(cancel)cancel.classList.add("hidden");
+ showBbdError(false); $("product").focus();
+}
+let lastDeletedItem=null;
+function removeItem(i){
+ let all=load(),session=all.find(x=>x.id===activeId);
+ if(!session||!session.items[i])return;
+ lastDeletedItem={sessionId:activeId,index:i,item:{...session.items[i]}};
+ session.items.splice(i,1); session.updated=Date.now(); persist(all); renderSession();
+ showToast("Item deleted"); let u=$("undoBtn");if(u)u.style.display="inline";
+}
+function undoDelete(){
+ if(!lastDeletedItem)return;
+ let all=load(),session=all.find(x=>x.id===lastDeletedItem.sessionId); if(!session)return;
+ session.items.splice(Math.min(lastDeletedItem.index,session.items.length),0,lastDeletedItem.item);
+ session.updated=Date.now(); persist(all); lastDeletedItem=null; renderSession(); showToast("Item restored");
+}
+
+function deleteSession(){
+ let session=current();if(!session)return;
+ if(!confirm("Delete this entire stock count session? This cannot be undone."))return;
+ let all=load().filter(x=>x.id!==activeId);
+ persist(all);
+ activeId=null;
+ goHome();
+}
+function exportCSV(){
+ let session=current();
+ if(!session){showToast("No active session");return}
+ let ended=Date.now();
+ let rows=[
+   ["Counter Name",session.counter],
+   ["Session Started",stamp(session.startedAt)],
+   ["Session Ended / Export Time",stamp(ended)],
+   [],
+   ["Item Name","Quantity","BBD"],
+   ...session.items.map(item=>[item.product,item.qty,item.bbd])
+ ];
+ let csv="\uFEFF"+rows.map(row=>row.map(value=>{
+   let v=String(value??"").replace(/"/g,'""');
+   return `"${v}"`;
+ }).join(",")).join("\r\n");
+ let blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+ let url=URL.createObjectURL(blob);
+ let link=document.createElement("a");
+ let d=new Date(session.startedAt);
+ let date=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+ link.href=url;
+ link.download=`StockFlow_${String(session.category||"Stock").replace(/\s+/g,"-")}_${date}_${String(session.counter||"Counter").replace(/\s+/g,"-")}.csv`;
+ document.body.appendChild(link);
+ link.click();
+ link.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1500);
+ showToast(`Exported ${session.items.length} products`);
+}
+
 function current(){return load().find(s=>s.id===activeId)}
 function renderHome(){let a=load(),el=$("savedSessions");el.innerHTML=a.length?a.map(s=>`<div class="session"><div class="session-head"><div><div class="session-category">${esc(s.category)}</div><div class="session-counter">${esc(s.counter)}</div></div><div class="pill">${s.items.length} items</div></div><div class="session-time">Started — ${stamp(s.startedAt)}<br>Last Saved — ${stamp(s.updated)}</div><button class="secondary" onclick="openSession('${s.id}')">Continue Session</button></div>`).join(""):'<div class="empty">No saved sessions yet.</div>'}
 function renderSession(){let s=current();if(!s)return goHome();$("sessionId").textContent=s.id;$("sessionCategory").textContent=s.category;$("sessionCounter").textContent="Counter — "+s.counter;$("sessionStarted").textContent="Started — "+stamp(s.startedAt);$("productCount").textContent=s.items.length;$("unitCount").textContent=s.items.reduce((n,x)=>n+Number(x.qty||0),0);$("items").innerHTML=s.items.length?s.items.map((x,i)=>`<div class="item"><div class="item-name">${esc(x.product)}</div><div class="item-meta">Qty: <b>${x.qty}</b> • BBD: ${esc(x.bbd||"—")}</div><div class="item-actions"><button onclick="editItem(${i})">Edit</button><button class="delete" onclick="removeItem(${i})">Delete</button></div></div>`).join(""):'<div class="empty">Nothing counted yet.</div>'}
